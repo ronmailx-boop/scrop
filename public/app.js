@@ -644,6 +644,36 @@ async function shareFiles() {
   }
 }
 
+// ---------- settings sheet (swipe down to hide, up to show) ----------
+
+const panel = $('panel');
+
+function setCollapsed(on) {
+  if (panel.classList.contains('collapsed') === on) return;
+  panel.classList.toggle('collapsed', on);
+  $('grip').setAttribute('aria-expanded', String(!on));
+}
+
+$('grip').addEventListener('click', () => setCollapsed(!panel.classList.contains('collapsed')));
+
+let swipe = null;
+panel.addEventListener('touchstart', (e) => {
+  if (e.touches.length !== 1) { swipe = null; return; }
+  const t = e.touches[0];
+  // Swipe-down only from the top of the panel's scroll, so normal scrolling still works.
+  swipe = { x: t.clientX, y: t.clientY, top: panel.scrollTop <= 0, slider: !!e.target.closest('input[type=range]') };
+}, { passive: true });
+panel.addEventListener('touchend', (e) => {
+  if (!swipe || swipe.slider) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipe.x;
+  const dy = t.clientY - swipe.y;
+  if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx) * 1.5) return;
+  if (dy > 0 && swipe.top) setCollapsed(true);
+  else if (dy < 0) setCollapsed(false);
+  swipe = null;
+});
+
 // ---------- wiring ----------
 
 $('fileInput').addEventListener('change', (e) => loadFile(e.target.files[0]));

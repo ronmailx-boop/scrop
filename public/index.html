@@ -51,7 +51,9 @@
         <div id="overlay"></div>
       </div>
 
-      <div class="panel">
+      <div id="panel" class="panel">
+        <button id="grip" class="grip" aria-label="הסתר או הצג הגדרות" aria-expanded="true"><span></span></button>
+        <div id="panelBody" class="panel-body">
         <div id="chips" class="chips"></div>
 
         <div id="fields" class="fields" hidden>
@@ -97,6 +99,7 @@
           <label><input type="radio" name="fmt" value="source" checked><span>אותו פורמט כמו המקור <small id="srcFmt" dir="ltr"></small></span></label>
           <label><input type="radio" name="fmt" value="jpg"><span>JPG</span></label>
           <label><input type="radio" name="fmt" value="pdf"><span>PDF</span></label>
+        </div>
         </div>
         <div class="actions">
           <button id="btnAdd" class="secondary">+ הוסף חיתוך</button>

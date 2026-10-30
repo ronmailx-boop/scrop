@@ -305,6 +305,26 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .seg input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--primary) 60%, transparent); }
 .seg small { font-weight: 500; opacity: .75; }
 
+/* Bottom sheet: swipe down on the panel (or tap the grip) to hide the settings. */
+.panel-body { display: flex; flex-direction: column; gap: 8px; }
+.panel.collapsed .panel-body { display: none; }
+.grip {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 0;
+  height: 22px;
+  margin: -8px -16px 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  touch-action: none;
+}
+.grip span { width: 44px; height: 5px; border-radius: 3px; background: var(--border); }
+.panel.collapsed .grip span { background: var(--primary); }
+@media (min-width: 900px) { .grip { display: none; } .panel.collapsed .panel-body { display: flex; } }
+
 /* ---------- adjustments ---------- */
 
 .adjust { border-radius: 12px; background: var(--surface-2); }

@@ -1,6 +1,6 @@
 // Offline cache for the app shell + share-target handler.
 // Bump VERSION on every release so clients pick up the new files.
-const VERSION = 'scrop-v3';
+const VERSION = 'scrop-v4';
 const SHARE_CACHE = 'scrop-share';
 const ASSETS = [
   './',
