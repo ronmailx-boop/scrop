@@ -146,6 +146,8 @@ async function run(page, file, rectsByPage, format) {
       assert.equal(out, `פלט: ${o.w}×${o.h} px`);
     }
   }
+  await page.click('#btnCrop');
+  await page.waitForSelector('#review:not([hidden])');
   await page.click(`.seg input[value="${format}"] + span`);
   await page.click('#btnSave');
   return { info, files: await saveZip(page, `${path.basename(file)}-${format}`) };
@@ -342,8 +344,19 @@ await test('Auto-detect crooked photos: frames straightened, save all at once', 
     assert.ok(Math.abs(f.angle - p.deg) <= 0.3, `angle ${f.angle} vs ${p.deg}`);
     assert.ok(Math.abs(f.w - p.w) <= 10 && Math.abs(f.h - p.h) <= 10, `size ${f.w}x${f.h} vs ${p.w}x${p.h}`);
   }
-  // One tap: "save all" in the detection bar.
+  // "Crop all" in the detection bar → review screen → save all.
   await page.click('#detectSave');
+  await page.waitForSelector('#review:not([hidden])');
+  assert.equal(await page.locator('.card').count(), 4);
+  // Each preview shows its photo (not blank scanner bed).
+  const blank = await page.$$eval('.card canvas', (cs) => cs.map((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let bed = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 240 && d[i + 1] > 240 && d[i + 2] > 240) bed++;
+    return bed / (d.length / 4);
+  }));
+  for (const f of blank) assert.ok(f < 0.05, `review preview is ${(f * 100).toFixed(0)}% blank`);
+  await page.click('#btnSave');
   const files = await saveZip(page, 'tilted-auto');
   assert.equal(Object.keys(files).length, 4);
   for (const [name, buf] of Object.entries(files)) {
@@ -382,6 +395,37 @@ await test('After detection a crop is selected; ✕ on the frame deletes it', as
   assert.equal(await page.locator('.crop.sel').count(), 0);
   assert.ok(await page.isVisible('#pickHint'), 'hint visible');
   assert.ok(!(await page.isVisible('#fields')));
+});
+
+await test('Review screen: rotate a cropped photo after cropping, then save', async () => {
+  await open(page, path.join(OUT, 'scan.png'));
+  await page.click('#btnCrop');
+  await page.waitForSelector('#review:not([hidden])');
+  assert.equal(await page.locator('.card').count(), 4);
+  const card = page.locator('.card').first();
+  const dims0 = await card.locator('.dims').textContent();
+  await card.locator('[data-rot="90"]').click();
+  const [w, h] = dims0.split('×');
+  assert.equal(await card.locator('.dims').textContent(), `${h}×${w}`);
+  // Remove the last photo, undo, remove again.
+  await page.locator('.card').last().locator('.card-del').click();
+  assert.equal(await page.locator('.card').count(), 3);
+  await page.click('#toast button');
+  assert.equal(await page.locator('.card').count(), 4);
+  await page.locator('.card').last().locator('.card-del').click();
+  // Back to editing keeps the rotation; then save from the review screen.
+  await page.click('#btnBack');
+  await page.waitForSelector('#editor:not([hidden])');
+  assert.equal(await page.locator('.crop').count(), 3);
+  await page.click('#btnCrop');
+  await page.waitForSelector('#review:not([hidden])');
+  assert.equal(await page.locator('.card').first().locator('.dims').textContent(), `${h}×${w}`);
+  await page.click('.seg input[value="source"] + span');
+  await page.click('#btnSave');
+  const files = await saveZip(page, 'review-rotate');
+  assert.equal(Object.keys(files).length, 3);
+  const img = PNG.sync.read(Buffer.from(files['scrop_1.png']));
+  assert.equal(`${img.width}×${img.height}`, `${h}×${w}`);
 });
 
 await test('No page errors', async () => {
