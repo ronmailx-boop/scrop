@@ -73,6 +73,23 @@
             <input data-k="w" data-u="mm" type="number" inputmode="decimal" step="0.1" aria-label="רוחב במילימטרים">
             <input data-k="h" data-u="mm" type="number" inputmode="decimal" step="0.1" aria-label="גובה במילימטרים">
           </div>
+          <details id="adjust" class="adjust">
+            <summary>סיבוב והתאמות תמונה</summary>
+            <div class="adjust-body">
+              <div class="thumb-row" dir="ltr">
+                <button id="rotL" class="secondary icon" aria-label="סובב שמאלה 90°">↺</button>
+                <canvas id="thumb"></canvas>
+                <button id="rotR" class="secondary icon" aria-label="סובב ימינה 90°">↻</button>
+              </div>
+              <label class="slider">בהירות <input data-adj="bright" type="range" dir="ltr" min="-50" max="50" step="1" value="0"><output></output></label>
+              <label class="slider">ניגודיות <input data-adj="contrast" type="range" dir="ltr" min="-50" max="50" step="1" value="0"><output></output></label>
+              <label class="slider">חיות <input data-adj="vivid" type="range" dir="ltr" min="-100" max="100" step="1" value="0"><output></output></label>
+              <div class="adjust-actions">
+                <button id="btnResetAdj" class="ghost">איפוס</button>
+                <button id="btnAllAdj" class="ghost">החל על כל החיתוכים</button>
+              </div>
+            </div>
+          </details>
         </div>
 
         <div class="seg" role="radiogroup" aria-label="פורמט פלט">

@@ -382,15 +382,81 @@ export function outputKind(source, format) {
   return { jpeg: 'jpg', png: 'png', pdf: 'pdf' }[source.origType];
 }
 
-async function encodeRegion(img, r, type, dpi) {
-  const c = newCanvas(r.w, r.h);
-  const ctx = c.getContext('2d', { alpha: type === 'png' });
+// ---------- per-crop edits (rotation in 90° steps, brightness / contrast / vivid) ----------
+
+export const NO_EDIT = Object.freeze({ rot: 0, bright: 0, contrast: 0, vivid: 0 });
+
+export const isPlain = (e) => !e || (!(e.rot % 360) && !e.bright && !e.contrast && !e.vivid);
+const hasTone = (e) => !!(e && (e.bright || e.contrast || e.vivid));
+
+// Output size of a w×h crop after rotation.
+export function rotatedSize(w, h, rot = 0) {
+  return (rot / 90) % 2 ? { w: h, h: w } : { w, h };
+}
+
+// Exact integer matrix mapping crop pixel (u, v) to output pixel: a pure pixel
+// permutation, so rotating never resamples.
+export function rotationMatrix(w, h, rot = 0) {
+  switch (((rot % 360) + 360) % 360) {
+    case 90: return [0, 1, -1, 0, h, 0];
+    case 180: return [-1, 0, 0, -1, w, h];
+    case 270: return [0, -1, 1, 0, 0, w];
+    default: return [1, 0, 0, 1, 0, 0];
+  }
+}
+
+// Same math as the CSS filters brightness() contrast() saturate(), in that order.
+// Slider values are percentages around 0.
+export function adjustPixels(data, e) {
+  const b = 1 + e.bright / 100;
+  const k = 1 + e.contrast / 100;
+  const s = 1 + e.vivid / 100;
+  const lut = new Uint8ClampedArray(256);
+  for (let v = 0; v < 256; v++) {
+    const v1 = Math.min(1, (v / 255) * b);
+    lut[v] = Math.round(Math.min(1, Math.max(0, (v1 - 0.5) * k + 0.5)) * 255);
+  }
+  const m = [
+    0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s,
+    0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s,
+    0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s,
+  ];
+  const sat = s !== 1;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = lut[data[i]], g = lut[data[i + 1]], bl = lut[data[i + 2]];
+    if (sat) {
+      data[i] = m[0] * r + m[1] * g + m[2] * bl;
+      data[i + 1] = m[3] * r + m[4] * g + m[5] * bl;
+      data[i + 2] = m[6] * r + m[7] * g + m[8] * bl;
+    } else {
+      data[i] = r; data[i + 1] = g; data[i + 2] = bl;
+    }
+  }
+  return data;
+}
+
+async function encodeRegion(img, r, type, dpi, edit = NO_EDIT) {
+  const out = rotatedSize(r.w, r.h, edit.rot);
+  const c = newCanvas(out.w, out.h);
+  const ctx = c.getContext('2d', { alpha: type === 'png', willReadFrequently: hasTone(edit) });
   ctx.imageSmoothingEnabled = false;
   if (type === 'jpeg') {
     ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, r.w, r.h);
+    ctx.fillRect(0, 0, out.w, out.h);
   }
+  ctx.setTransform(...rotationMatrix(r.w, r.h, edit.rot));
   ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (hasTone(edit)) {
+    // In strips, to keep memory flat on large crops.
+    const strip = Math.max(1, Math.floor(4e6 / out.w));
+    for (let y = 0; y < out.h; y += strip) {
+      const h = Math.min(strip, out.h - y);
+      const id = ctx.getImageData(0, y, out.w, h);
+      adjustPixels(id.data, edit);
+      ctx.putImageData(id, 0, y);
+    }
+  }
   const blob = await canvasToBlob(c, `image/${type}`, 1);
   freeCanvas(c);
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -399,10 +465,10 @@ async function encodeRegion(img, r, type, dpi) {
 
 async function cropBytes(source, img, r, type) {
   const whole = r.x === 0 && r.y === 0 && r.w === source.width && r.h === source.height;
-  if (whole && source.origBlob && source.origBlobType === type) {
+  if (whole && isPlain(r.edit) && source.origBlob && source.origBlobType === type) {
     return new Uint8Array(await source.origBlob.arrayBuffer());
   }
-  return encodeRegion(img, r, type, source.dpi);
+  return encodeRegion(img, r, type, source.dpi, r.edit || NO_EDIT);
 }
 
 async function singleImagePdf(bytes, isJpeg, w, h, dpi) {
@@ -420,7 +486,7 @@ async function singleImagePdf(bytes, isJpeg, w, h, dpi) {
 
 const MIME = { jpg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' };
 
-// Crops `rects` (integer source pixels) one at a time; returns [{name, blob, w, h}].
+// Crops `rects` (integer source pixels, optional `edit`) one at a time; returns [{name, blob, w, h}].
 export async function exportCrops(source, rects, format, firstNo, onProgress) {
   const kind = outputKind(source, format);
   const files = [];
@@ -430,15 +496,16 @@ export async function exportCrops(source, rects, format, firstNo, onProgress) {
       const r = rects[i];
       const no = firstNo + i;
       onProgress?.(no);
+      const out = rotatedSize(r.w, r.h, r.edit?.rot);
       let bytes;
       if (kind === 'pdf') {
         const type = source.lossy ? 'jpeg' : 'png';
         const img = await cropBytes(source, opened.img, r, type);
-        bytes = await singleImagePdf(img, type === 'jpeg', r.w, r.h, source.dpi);
+        bytes = await singleImagePdf(img, type === 'jpeg', out.w, out.h, source.dpi);
       } else {
         bytes = await cropBytes(source, opened.img, r, kind === 'jpg' ? 'jpeg' : 'png');
       }
-      files.push({ name: `scrop_${no}.${kind}`, blob: new Blob([bytes], { type: MIME[kind] }), w: r.w, h: r.h });
+      files.push({ name: `scrop_${no}.${kind}`, blob: new Blob([bytes], { type: MIME[kind] }), w: out.w, h: out.h });
     }
   } finally {
     opened.close();

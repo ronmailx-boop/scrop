@@ -1,5 +1,6 @@
 import {
   openImage, openPdf, closePdf, pdfPageSource, exportCrops, zipFiles, outputKind, UserError,
+  NO_EDIT, isPlain, rotatedSize, rotationMatrix, adjustPixels,
 } from './engine.js';
 
 const $ = (id) => document.getElementById(id);
@@ -227,7 +228,8 @@ function renderPanel() {
     const b = document.createElement('button');
     b.className = 'chip' + (r === state.selected ? ' sel' : '');
     b.style.setProperty('--c', colorOf(n));
-    b.innerHTML = `<b>${n}</b><span dir="ltr">${r.w}×${r.h}</span>`;
+    const o = rotatedSize(r.w, r.h, r.edit.rot);
+    b.innerHTML = `<b>${n}</b><span dir="ltr">${o.w}×${o.h}</span>${isPlain(r.edit) ? '' : '<span class="tag">✎</span>'}`;
     b.onclick = () => select(r);
     chips.append(b);
   }
@@ -241,17 +243,57 @@ function renderPanel() {
     badge.textContent = n;
     badge.style.setProperty('--c', colorOf(n));
     $('selOut').innerHTML = 'פלט: <span dir="ltr"></span>';
-    $('selOut').lastChild.textContent = `${r.w}×${r.h} px`;
+    const o = rotatedSize(r.w, r.h, r.edit.rot);
+    $('selOut').lastChild.textContent = `${o.w}×${o.h} px`;
     const mm = 25.4 / state.source.dpi;
     for (const inp of $('fields').querySelectorAll('input')) {
       if (inp === document.activeElement) continue;
       const v = r[inp.dataset.k];
       inp.value = inp.dataset.u === 'px' ? v : (v * mm).toFixed(1);
     }
+    for (const inp of $('adjust').querySelectorAll('input[type=range]')) {
+      inp.value = r.edit[inp.dataset.adj];
+      inp.nextElementSibling.textContent = signed(r.edit[inp.dataset.adj]);
+    }
+    if ($('adjust').open) drawThumb();
   }
   const total = [...state.rects.values()].reduce((a, l) => a + l.length, 0);
   $('btnSave').disabled = !total;
   $('btnSave').textContent = total ? `שמור הכל (${total})` : 'שמור הכל';
+}
+
+const signed = (v) => (v > 0 ? '+' : '') + v;
+
+// Live preview of the selected crop with its rotation and adjustments,
+// drawn from the display copy with the same pixel math used on export.
+function drawThumb() {
+  const r = state.selected;
+  const src = state.source;
+  if (!r || !src) return;
+  const c = $('thumb');
+  const o = rotatedSize(r.w, r.h, r.edit.rot);
+  const k = Math.min(320 / o.w, 240 / o.h);
+  c.width = Math.max(1, Math.round(o.w * k));
+  c.height = Math.max(1, Math.round(o.h * k));
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  const pk = src.preview.width / src.width;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.transform(...rotationMatrix(r.w, r.h, r.edit.rot));
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src.preview, r.x * pk, r.y * pk, r.w * pk, r.h * pk, 0, 0, r.w, r.h);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (!isPlain({ ...r.edit, rot: 0 })) {
+    const id = ctx.getImageData(0, 0, c.width, c.height);
+    adjustPixels(id.data, r.edit);
+    ctx.putImageData(id, 0, 0);
+  }
+}
+
+function editSelected(change) {
+  const r = state.selected;
+  if (!r) return;
+  change(r.edit);
+  renderPanel();
 }
 
 function select(r) {
@@ -278,6 +320,7 @@ function addRect() {
     x: Math.round(clamp(vx0 + (vx1 - vx0) * (0.3 + step) - w / 2, 0, src.width - w)),
     y: Math.round(clamp(vy0 + (vy1 - vy0) * (0.2 + step), 0, src.height - h)),
     w, h,
+    edit: { ...NO_EDIT },
   };
   pageRects().push(r);
   select(r);
@@ -463,7 +506,7 @@ async function saveAll() {
   try {
     let no = 1;
     for (const p of pages) {
-      const rects = state.rects.get(p).map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h }));
+      const rects = state.rects.get(p).map((r) => ({ x: r.x, y: r.y, w: r.w, h: r.h, edit: { ...r.edit } }));
       let src = state.source;
       const temp = state.pdf && p !== state.page;
       if (temp) {
@@ -566,6 +609,20 @@ async function shareFiles() {
 $('fileInput').addEventListener('change', (e) => loadFile(e.target.files[0]));
 $('btnAdd').addEventListener('click', addRect);
 $('btnDelete').addEventListener('click', deleteSelected);
+$('rotL').addEventListener('click', () => editSelected((e) => { e.rot = (e.rot + 270) % 360; }));
+$('rotR').addEventListener('click', () => editSelected((e) => { e.rot = (e.rot + 90) % 360; }));
+$('adjust').addEventListener('toggle', () => $('adjust').open && drawThumb());
+for (const inp of $('adjust').querySelectorAll('input[type=range]')) {
+  inp.addEventListener('input', () => editSelected((e) => { e[inp.dataset.adj] = Number(inp.value); }));
+}
+$('btnResetAdj').addEventListener('click', () => editSelected((e) => Object.assign(e, NO_EDIT)));
+$('btnAllAdj').addEventListener('click', () => {
+  const src = state.selected?.edit;
+  if (!src) return;
+  for (const list of state.rects.values()) for (const r of list) r.edit = { ...src };
+  render();
+  toast('ההגדרות הוחלו על כל החיתוכים.');
+});
 $('btnSave').addEventListener('click', saveAll);
 $('btnZip').addEventListener('click', downloadZip);
 $('btnShare').addEventListener('click', shareFiles);

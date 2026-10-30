@@ -13,6 +13,7 @@ import { unzipSync } from 'fflate';
 import { PDFDocument, PDFName, PDFDict } from 'pdf-lib';
 import { makeSamples, makePdfs, PHOTOS, W, pixel } from './make-samples.mjs';
 import { serve } from './serve.mjs';
+import { rotatedSize, rotationMatrix, adjustPixels, NO_EDIT } from '../public/engine.js';
 
 // Playwright is resolved via require so a globally installed copy (NODE_PATH) also works.
 const { chromium, devices } = createRequire(import.meta.url)('playwright');
@@ -97,9 +98,17 @@ async function run(page, file, rectsByPage, format) {
       const set = async (k, v) => page.fill(`#fields input[data-k="${k}"][data-u="px"]`, String(v));
       await set('w', 2); await set('h', 2);
       await set('x', r.x); await set('y', r.y); await set('w', r.w); await set('h', r.h);
+      if (r.edit) {
+        if (!(await page.$eval('#adjust', (d) => d.open))) await page.click('#adjust summary');
+        for (let k = 0; k < (r.edit.rot || 0) / 90; k++) await page.click('#rotR');
+        for (const key of ['bright', 'contrast', 'vivid']) {
+          if (r.edit[key]) await page.fill(`#adjust input[data-adj="${key}"]`, String(r.edit[key]));
+        }
+      }
       await page.locator('#btnAdd').focus();
       const out = await page.textContent('#selOut');
-      assert.equal(out, `פלט: ${r.w}×${r.h} px`);
+      const o = rotatedSize(r.w, r.h, r.edit?.rot);
+      assert.equal(out, `פלט: ${o.w}×${o.h} px`);
     }
   }
   await page.click(`.seg input[value="${format}"] + span`);
@@ -214,6 +223,42 @@ await test('Vector PDF, 2 pages → rendered at 300 DPI, crops from both pages n
       assert.deepEqual([...raw.subarray(o, o + 3)], [51, 204, 51]);
     }
   }
+});
+
+await test('Rotate + brightness/contrast/vivid: exact pixels after the edit (PNG)', async () => {
+  // Formula sanity: brightness +20% on mid-grey, contrast +50% around the midpoint, vivid 0 keeps grey.
+  assert.deepEqual([...adjustPixels(new Uint8ClampedArray([100, 100, 100, 255]), { bright: 20, contrast: 0, vivid: 0 })], [120, 120, 120, 255]);
+  assert.deepEqual([...adjustPixels(new Uint8ClampedArray([191, 64, 128, 255]), { bright: 0, contrast: 50, vivid: 0 })], [223, 32, 128, 255]);
+  assert.deepEqual([...adjustPixels(new Uint8ClampedArray([90, 90, 90, 255]), { bright: 0, contrast: 0, vivid: 80 })], [90, 90, 90, 255]);
+  const edits = [
+    { rot: 90 },
+    { bright: 20, contrast: 10, vivid: 30 },
+    { rot: 180, vivid: -100 },
+    { rot: 270, bright: -15, contrast: 25 },
+  ];
+  const rects = PHOTOS.map((r, i) => ({ ...r, edit: edits[i] }));
+  const { files } = await run(page, path.join(OUT, 'scan.png'), [[1, rects]], 'source');
+  rects.forEach((r, i) => {
+    const e = { ...NO_EDIT, ...r.edit };
+    const img = PNG.sync.read(Buffer.from(files[`scrop_${i + 1}.png`]));
+    const o = rotatedSize(r.w, r.h, e.rot);
+    assert.equal(`${img.width}x${img.height}`, `${o.w}x${o.h}`);
+    const [a, b, c, d, ex, f] = rotationMatrix(r.w, r.h, e.rot);
+    const px = new Uint8ClampedArray(4);
+    for (let v = 0; v < r.h; v++) {
+      for (let u = 0; u < r.w; u++) {
+        px.set([...pixel(r.x + u, r.y + v), 255]);
+        adjustPixels(px, e);
+        const X = a * u + c * v + ex - (a < 0 || c < 0 ? 1 : 0);
+        const Y = b * u + d * v + f - (b < 0 || d < 0 ? 1 : 0);
+        const p = (Y * img.width + X) * 4;
+        const got = [img.data[p], img.data[p + 1], img.data[p + 2]];
+        if (got[0] !== px[0] || got[1] !== px[1] || got[2] !== px[2]) {
+          assert.fail(`crop ${i + 1}: (${u},${v})→(${X},${Y}) = ${got} expected ${[...px.subarray(0, 3)]}`);
+        }
+      }
+    }
+  });
 });
 
 await test('No page errors', async () => {
