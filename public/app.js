@@ -16,6 +16,7 @@ const state = {
   page: 1,
   source: null,
   rects: new Map(), // page -> [{id, x, y, w, h}]
+  pageViews: new Map(), // page -> {canvas, w, h}: small display copy, for the review screen
   selected: null,
   view: { s: 1, tx: 0, ty: 0 },
   files: [],
@@ -119,6 +120,8 @@ async function resetDoc() {
   if (state.pdf) await closePdf(state.pdf);
   state.pdf = null;
   state.rects = new Map();
+  for (const v of state.pageViews.values()) v.canvas.width = 0;
+  state.pageViews = new Map();
   state.selected = null;
   state.page = 1;
 }
@@ -180,8 +183,23 @@ function showDetectBar(n) {
   $('detectSave').hidden = n === 0;
 }
 
+// Display copy of a page, kept after leaving it so the review screen can show its crops.
+function keepPageView(src) {
+  const k = Math.min(1, 1600 / Math.max(src.preview.width, src.preview.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(src.preview.width * k);
+  c.height = Math.round(src.preview.height * k);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src.preview, 0, 0, c.width, c.height);
+  const old = state.pageViews.get(state.page);
+  if (old) old.canvas.width = 0;
+  state.pageViews.set(state.page, { canvas: c, w: src.width, h: src.height });
+}
+
 function setSource(src) {
   state.source = src;
+  keepPageView(src);
   preview.width = src.preview.width;
   preview.height = src.preview.height;
   preview.getContext('2d').drawImage(src.preview, 0, 0);
@@ -207,6 +225,7 @@ function showEditor() {
 
 async function showHome() {
   await resetDoc();
+  $('review').hidden = true;
   $('editor').hidden = true;
   $('home').hidden = false;
   $('btnNew').hidden = true;
@@ -317,21 +336,19 @@ function renderPanel() {
     if ($('adjust').open) drawThumb();
   }
   const total = [...state.rects.values()].reduce((a, l) => a + l.length, 0);
-  $('btnSave').disabled = !total;
-  $('btnSave').textContent = total ? `שמור הכל (${total})` : 'שמור הכל';
+  $('btnCrop').disabled = !total;
+  $('btnCrop').textContent = total ? `חתוך (${total}) ←` : 'חתוך ←';
 }
 
 const signed = (v) => (v > 0 ? '+' : '') + v;
 
 // Live preview of the selected crop with its rotation and adjustments,
 // drawn from the display copy with the same pixel math used on export.
-function drawThumb() {
-  const r = state.selected;
-  const src = state.source;
-  if (!r || !src) return;
-  const c = $('thumb');
+// Draws crop `r` as it will be saved (rotation, straightening, adjustments) into `c`,
+// from a display copy of its page; fits within maxW×maxH.
+function paintCrop(c, view, r, maxW, maxH) {
   const o = rotatedSize(r.w, r.h, r.edit.rot);
-  const k = Math.min(320 / o.w, 240 / o.h);
+  const k = Math.min(maxW / o.w, maxH / o.h);
   c.width = Math.max(1, Math.round(o.w * k));
   c.height = Math.max(1, Math.round(o.h * k));
   const ctx = c.getContext('2d', { willReadFrequently: true });
@@ -339,13 +356,20 @@ function drawThumb() {
   ctx.fillRect(0, 0, c.width, c.height);
   ctx.setTransform(k, 0, 0, k, 0, 0);
   ctx.imageSmoothingQuality = 'high';
-  drawCrop(ctx, src.preview, r, r.edit, src.width, src.height);
+  drawCrop(ctx, view.canvas, r, r.edit, view.w, view.h);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (r.edit.bright || r.edit.contrast || r.edit.vivid) {
     const id = ctx.getImageData(0, 0, c.width, c.height);
     adjustPixels(id.data, r.edit);
     ctx.putImageData(id, 0, 0);
   }
+}
+
+function drawThumb() {
+  const r = state.selected;
+  const src = state.source;
+  if (!r || !src) return;
+  paintCrop($('thumb'), { canvas: src.preview, w: src.width, h: src.height }, r, 320, 240);
 }
 
 function editSelected(change) {
@@ -385,23 +409,94 @@ function addRect() {
   select(r);
 }
 
-function deleteSelected() {
-  const list = pageRects();
-  const r = state.selected;
+// ---------- review: the cropped photos, rotatable, before saving ----------
+
+function allCrops() {
+  return [...state.rects.keys()].sort((a, b) => a - b)
+    .flatMap((p) => state.rects.get(p).map((r) => ({ p, r })));
+}
+
+function showReview() {
+  if (!hasCrops()) return;
+  history.pushState({ review: true }, '');
+  openReview();
+}
+
+function openReview() {
+  showDetectBar(null);
+  $('editor').hidden = true;
+  $('review').hidden = false;
+  renderReview();
+}
+
+function closeReview() {
+  $('review').hidden = true;
+  $('editor').hidden = false;
+  render();
+}
+
+function renderReview() {
+  const grid = $('reviewGrid');
+  grid.innerHTML = '';
+  const crops = allCrops();
+  for (const { p, r } of crops) {
+    const n = labelOf(r);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.setProperty('--c', colorOf(n));
+    card.innerHTML = `
+      <div class="card-img"><canvas></canvas><b class="num"></b>
+        <button class="card-del" aria-label="הסר את תמונה ${n}">✕</button></div>
+      <div class="card-row" dir="ltr">
+        <button class="secondary icon" data-rot="-90" aria-label="סובב את תמונה ${n} שמאלה">↺</button>
+        <span class="dims"></span>
+        <button class="secondary icon" data-rot="90" aria-label="סובב את תמונה ${n} ימינה">↻</button>
+      </div>`;
+    card.querySelector('.num').textContent = n;
+    const paint = () => {
+      const view = state.pageViews.get(p);
+      if (view) paintCrop(card.querySelector('canvas'), view, r, 480, 480);
+      const o = rotatedSize(r.w, r.h, r.edit.rot);
+      card.querySelector('.dims').textContent = `${o.w}×${o.h}`;
+    };
+    for (const b of card.querySelectorAll('[data-rot]')) {
+      b.onclick = () => {
+        r.edit.rot = (r.edit.rot + Number(b.dataset.rot) + 360) % 360;
+        paint();
+      };
+    }
+    card.querySelector('.card-del').onclick = () => {
+      removeCrop(p, r);
+      if (hasCrops()) renderReview(); else history.back();
+    };
+    grid.append(card);
+    paint();
+  }
+  $('btnSave').textContent = `שמור הכל (${crops.length})`;
+}
+
+// Removes a crop, with an undo in the toast.
+function removeCrop(page, r) {
+  const list = pageRects(page);
   const i = list.indexOf(r);
   if (i < 0) return;
   list.splice(i, 1);
-  state.selected = list[Math.min(i, list.length - 1)] || null;
-  render();
-  const page = state.page;
+  if (state.selected === r) state.selected = page === state.page ? list[Math.min(i, list.length - 1)] || null : null;
   toast('החיתוך נמחק', 5000, {
     label: 'בטל',
     run: () => {
       const l = pageRects(page);
       l.splice(Math.min(i, l.length), 0, r);
-      if (page === state.page) { state.selected = r; render(); }
+      if (!$('review').hidden) renderReview();
+      else if (page === state.page) { state.selected = r; render(); }
     },
   });
+}
+
+function deleteSelected() {
+  if (!state.selected) return;
+  removeCrop(state.page, state.selected);
+  render();
 }
 
 function constrain(r) {
@@ -755,7 +850,9 @@ $('btnDetect').addEventListener('click', () => {
   if (pageRects().length && !confirm('להחליף את החיתוכים בעמוד הזה בזיהוי אוטומטי?')) return;
   runDetect();
 });
-$('detectSave').addEventListener('click', () => saveAll());
+$('detectSave').addEventListener('click', () => showReview());
+$('btnCrop').addEventListener('click', () => showReview());
+$('btnBack').addEventListener('click', () => history.back());
 $('detectClose').addEventListener('click', () => showDetectBar(null));
 $('btnDelete').addEventListener('click', deleteSelected);
 $('rotL').addEventListener('click', () => editSelected((e) => { e.rot = (e.rot + 270) % 360; }));
@@ -789,17 +886,27 @@ for (const inp of $('fields').querySelectorAll('input')) {
   inp.addEventListener('blur', renderPanel);
 }
 
+let leaving = false;
 $('btnNew').addEventListener('click', () => {
   if (hasCrops() && !confirm('לפתוח קובץ חדש? החיתוכים הנוכחיים יימחקו.')) return;
-  history.back();
+  leaving = true;
+  history.go($('review').hidden ? -1 : -2);
 });
 
+// Screens follow history: home ← editor ← review, so Android's back button walks back.
 window.addEventListener('popstate', () => {
-  if ($('editor').hidden) return;
-  if (hasCrops() && !confirm('לצאת? החיתוכים הנוכחיים יימחקו.')) {
+  const st = history.state || {};
+  if (st.review) {
+    if (hasCrops()) openReview(); else history.back();
+    return;
+  }
+  if (!$('review').hidden) closeReview();
+  if (st.editor || $('editor').hidden) return;
+  if (!leaving && hasCrops() && !confirm('לצאת? החיתוכים הנוכחיים יימחקו.')) {
     history.pushState({ editor: true }, '');
     return;
   }
+  leaving = false;
   showHome();
 });
 

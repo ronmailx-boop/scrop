@@ -454,8 +454,9 @@ function rotatedBounds(r, angle, W, H) {
 // Draws crop `r` of `img` into ctx at output orientation (current transform = output space).
 export function drawCrop(ctx, img, r, edit, W = img.width, H = img.height) {
   ctx.transform(...rotationMatrix(r.w, r.h, edit.rot));
+  const k = img.width / W; // img may be a scaled copy (preview); 1 for export
   if (!edit.angle) {
-    ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    ctx.drawImage(img, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, r.w, r.h);
     return;
   }
   // Straightening resamples, so interpolate (nearest-neighbour would leave jagged edges).
@@ -464,7 +465,6 @@ export function drawCrop(ctx, img, r, edit, W = img.width, H = img.height) {
   ctx.translate(r.w / 2, r.h / 2);
   ctx.rotate((-edit.angle * Math.PI) / 180);
   ctx.translate(-(r.x + r.w / 2), -(r.y + r.h / 2));
-  const k = img.width / W; // img may be a scaled copy (preview)
   const b = rotatedBounds(r, edit.angle, W, H);
   if (b) ctx.drawImage(img, b.x * k, b.y * k, b.w * k, b.h * k, b.x, b.y, b.w, b.h);
 }

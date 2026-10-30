@@ -49,7 +49,7 @@
 
       <div id="detectBar" class="detect-bar" dir="rtl" role="status" hidden>
         <span id="detectText"></span>
-        <button id="detectSave" class="primary">שמור הכל</button>
+        <button id="detectSave" class="primary">חתוך הכל</button>
         <button id="detectClose" class="ghost" aria-label="סגור">✕</button>
       </div>
       <div id="stage" class="stage" dir="ltr">
@@ -102,14 +102,28 @@
           </details>
         </div>
 
+        </div>
+        <div class="actions">
+          <button id="btnAdd" class="secondary">+ הוסף חיתוך</button>
+          <button id="btnCrop" class="primary">חתוך</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="review" class="review" hidden>
+      <div class="review-head">
+        <h2>התמונות שנחתכו</h2>
+        <p>כך כל תמונה תישמר. אפשר לסובב או להסיר תמונה לפני השמירה.</p>
+      </div>
+      <div id="reviewGrid" class="review-grid"></div>
+      <div class="review-foot">
         <div class="seg" role="radiogroup" aria-label="פורמט פלט">
           <label><input type="radio" name="fmt" value="source" checked><span>אותו פורמט כמו המקור <small id="srcFmt" dir="ltr"></small></span></label>
           <label><input type="radio" name="fmt" value="jpg"><span>JPG</span></label>
           <label><input type="radio" name="fmt" value="pdf"><span>PDF</span></label>
         </div>
-        </div>
         <div class="actions">
-          <button id="btnAdd" class="secondary">+ הוסף חיתוך</button>
+          <button id="btnBack" class="secondary">חזרה לעריכה</button>
           <button id="btnSave" class="primary">שמור הכל</button>
         </div>
       </div>
