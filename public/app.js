@@ -929,8 +929,26 @@ async function takeSharedFile() {
   }
 }
 
+// Updates: check for a new version whenever the app is opened or brought back, and
+// switch to it as soon as it is installed. Mid-edit, offer a refresh instead, so
+// no crops are lost.
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch((e) => console.warn('SW registration failed', e));
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    if (hasCrops()) {
+      toast('גרסה חדשה מוכנה', 15000, { label: 'רענן', run: () => location.reload() });
+      return;
+    }
+    reloading = true;
+    location.reload();
+  });
 }
 takeSharedFile();
 
