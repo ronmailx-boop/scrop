@@ -68,6 +68,53 @@ export function makeTilted(dir) {
   return png;
 }
 
+// Like a real phone-user scan: photos pushed into the scanner's corner (touching the
+// top/left/right edges), one very light beach photo, narrow white gaps, an off-white
+// noisy bed and the scanner lid's dark line along the top edge.
+export const SCAN_W = 2400;
+export const SCAN_H = 3437;
+export const EDGE = [
+  { x: 0, y: 0, w: 1180, h: 1680, kind: 'beach' },
+  { x: 1215, y: 0, w: 1185, h: 1700, kind: 'dark' },
+  { x: 420, y: 1960, w: 1690, h: 1180, kind: 'snow' },
+];
+
+function noise(x, y) {
+  // Deterministic grain in [-1, 1].
+  const n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return (n - Math.floor(n)) * 2 - 1;
+}
+
+export function edgePixel(x, y) {
+  if (y < 6 && x > 1500) return [40, 40, 45]; // lid line at the top edge
+  for (const p of EDGE) {
+    if (x < p.x || x >= p.x + p.w || y < p.y || y >= p.y + p.h) continue;
+    const u = (x - p.x) / p.w, v = (y - p.y) / p.h, g = noise(x, y) * 10;
+    if (p.kind === 'beach') {
+      // Pale sky, very light sand, a darker figure in the middle.
+      if (Math.abs(u - 0.45) < 0.08 && v > 0.25 && v < 0.75) return [60 + g, 70 + g, 110 + g];
+      return v < 0.2 ? [205 + g, 222 + g, 238 + g] : [226 + g, 212 + g, 206 + g];
+    }
+    if (p.kind === 'dark') return [30 + 20 * Math.sin(u * 20) + g, 30 + g, 60 + 30 * v + g];
+    return [150 + 60 * v + g, 170 + 50 * v + g, 175 + 40 * Math.sin(u * 30) + g]; // snow scene
+  }
+  const g = noise(x, y) * 2;
+  return [247 + g, 247 + g, 245 + g];
+}
+
+export function makeEdgeScan(dir) {
+  const png = new PNG({ width: SCAN_W, height: SCAN_H, colorType: 2 });
+  for (let y = 0; y < SCAN_H; y++) {
+    for (let x = 0; x < SCAN_W; x++) {
+      const o = (y * SCAN_W + x) * 4;
+      const [r, g, b] = edgePixel(x, y);
+      png.data[o] = r; png.data[o + 1] = g; png.data[o + 2] = b; png.data[o + 3] = 255;
+    }
+  }
+  fs.writeFileSync(path.join(dir, 'scan-edge.png'), PNG.sync.write(png, { colorType: 2 }));
+  return png;
+}
+
 export function makeSamples(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const rgba = Buffer.alloc(W * H * 4);
@@ -121,5 +168,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const bufs = makeSamples(dir);
   await makePdfs(dir, bufs);
   makeTilted(dir);
+  makeEdgeScan(dir);
   console.log('samples written to', dir);
 }
