@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Scrop – חיתוך תמונות מסריקה</title>
+  <meta name="description" content="חיתוך כמה תמונות מתוך סריקה אחת ושמירת כל תמונה כקובץ נפרד, בלי לפגוע באיכות. הכול נשאר במכשיר.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#7367f0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1b1830" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="36" height="36">
+      <div>
+        <h1>Scrop</h1>
+        <p>חיתוך תמונות מסריקה</p>
+      </div>
+    </div>
+    <button id="btnNew" class="ghost" hidden>קובץ חדש</button>
+  </header>
+
+  <main>
+    <section id="home" class="home">
+      <label class="pick">
+        <input id="fileInput" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png">
+        <span class="pick-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="40" height="40"><path d="M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </span>
+        <span>בחר קובץ</span>
+      </label>
+      <p class="hint">PDF, ‏JPG או PNG של סריקה עם כמה תמונות.<br>הקבצים לא יוצאים מהמכשיר.</p>
+    </section>
+
+    <section id="editor" class="editor" hidden>
+      <div class="bar">
+        <label id="pageWrap" class="page" hidden>עמוד
+          <select id="pageSelect"></select>
+        </label>
+        <span id="srcInfo" class="src-info"></span>
+      </div>
+
+      <div id="stage" class="stage" dir="ltr">
+        <canvas id="preview"></canvas>
+        <div id="overlay"></div>
+      </div>
+
+      <div class="panel">
+        <div id="chips" class="chips"></div>
+
+        <div id="fields" class="fields" hidden>
+          <div class="fields-head">
+            <span id="selBadge" class="badge"></span>
+            <span id="selOut" class="out"></span>
+            <button id="btnDelete" class="danger">מחק</button>
+          </div>
+          <div class="grid">
+            <span></span><span>X</span><span>Y</span><span>רוחב</span><span>גובה</span>
+            <span class="unit">px</span>
+            <input data-k="x" data-u="px" type="number" inputmode="numeric" aria-label="X בפיקסלים">
+            <input data-k="y" data-u="px" type="number" inputmode="numeric" aria-label="Y בפיקסלים">
+            <input data-k="w" data-u="px" type="number" inputmode="numeric" aria-label="רוחב בפיקסלים">
+            <input data-k="h" data-u="px" type="number" inputmode="numeric" aria-label="גובה בפיקסלים">
+            <span class="unit">mm</span>
+            <input data-k="x" data-u="mm" type="number" inputmode="decimal" step="0.1" aria-label="X במילימטרים">
+            <input data-k="y" data-u="mm" type="number" inputmode="decimal" step="0.1" aria-label="Y במילימטרים">
+            <input data-k="w" data-u="mm" type="number" inputmode="decimal" step="0.1" aria-label="רוחב במילימטרים">
+            <input data-k="h" data-u="mm" type="number" inputmode="decimal" step="0.1" aria-label="גובה במילימטרים">
+          </div>
+        </div>
+
+        <div class="seg" role="radiogroup" aria-label="פורמט פלט">
+          <label><input type="radio" name="fmt" value="source" checked><span>אותו פורמט כמו המקור <small id="srcFmt" dir="ltr"></small></span></label>
+          <label><input type="radio" name="fmt" value="jpg"><span>JPG</span></label>
+          <label><input type="radio" name="fmt" value="pdf"><span>PDF</span></label>
+        </div>
+        <div class="actions">
+          <button id="btnAdd" class="secondary">+ הוסף חיתוך</button>
+          <button id="btnSave" class="primary">שמור הכל</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="results">
+    <h2>הקבצים מוכנים</h2>
+    <ul id="resultList" class="result-list"></ul>
+    <div class="result-actions">
+      <button id="btnZip" class="primary wide">שמור כ-ZIP</button>
+      <button id="btnShare" class="secondary wide" hidden>שתף / שמור קבצים</button>
+      <button id="btnEach" class="secondary wide">הורד כל קובץ בנפרד</button>
+      <button id="btnClose" class="ghost wide">סגור</button>
+    </div>
+  </dialog>
+
+  <div id="busy" class="busy" hidden>
+    <div class="spinner"></div>
+    <p id="busyText">טוען…</p>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
