@@ -362,6 +362,28 @@ await test('Auto-detect crooked photos: frames straightened, save all at once', 
   }
 });
 
+await test('After detection a crop is selected; ✕ on the frame deletes it', async () => {
+  await open(page, path.join(OUT, 'scan.png'));
+  assert.equal(await page.locator('.chip').count(), 4);
+  assert.ok(await page.isVisible('#fields'), 'edit fields visible for the selected crop');
+  assert.ok(await page.isVisible('#adjust summary'), 'rotate/straighten section reachable');
+  await page.click('.crop.sel .del');
+  assert.equal(await page.locator('.chip').count(), 3);
+  assert.equal(await page.locator('.crop').count(), 3);
+  // Undo brings it back.
+  await page.click('#toast button');
+  assert.equal(await page.locator('.crop').count(), 4);
+  await page.click('.crop.sel .del');
+  assert.equal(await page.locator('.crop').count(), 3);
+  // Nothing selected now → hint tells the user to tap a frame.
+  // Tap on empty scanner bed → nothing selected → hint tells the user to tap a frame.
+  const st = await page.locator('#stage').boundingBox();
+  await page.mouse.click(st.x + 6, st.y + st.height - 6);
+  assert.equal(await page.locator('.crop.sel').count(), 0);
+  assert.ok(await page.isVisible('#pickHint'), 'hint visible');
+  assert.ok(!(await page.isVisible('#fields')));
+});
+
 await test('No page errors', async () => {
   assert.deepEqual(errors, []);
 });

@@ -28,9 +28,17 @@ const preview = $('preview');
 
 // ---------- helpers ----------
 
-function toast(msg, ms = 3500) {
+// Optional action = {label, run}: shows a button in the toast (e.g. undo).
+function toast(msg, ms = 3500, action = null) {
   const t = $('toast');
   t.textContent = msg;
+  t.classList.toggle('has-action', !!action);
+  if (action) {
+    const b = document.createElement('button');
+    b.textContent = action.label;
+    b.onclick = () => { t.classList.remove('show'); action.run(); };
+    t.append(b);
+  }
   t.classList.add('show');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => t.classList.remove('show'), ms);
@@ -156,7 +164,8 @@ async function runDetect() {
     constrain(r);
     list.push(r);
   }
-  state.selected = null;
+  // Select the first photo so its edit tools are right there in the panel.
+  state.selected = list[0] || null;
   showDetectBar(found.length);
   render();
 }
@@ -247,7 +256,8 @@ function render() {
       el = document.createElement('div');
       el.className = 'crop';
       el.dataset.id = r.id;
-      el.innerHTML = '<span class="num"></span>' + HANDLES.map((h) => `<i data-h="${h}" class="h h-${h}"></i>`).join('');
+      el.innerHTML = '<span class="num"></span>' + HANDLES.map((h) => `<i data-h="${h}" class="h h-${h}"></i>`).join('')
+        + '<i data-del class="del" title="מחק חיתוך"></i>';
       overlay.append(el);
       rectEls.set(r.id, el);
     }
@@ -285,6 +295,7 @@ function renderPanel() {
 
   const r = state.selected;
   $('fields').hidden = !r;
+  $('pickHint').hidden = !!r || !list.length;
   if (r) {
     const n = labelOf(r);
     const badge = $('selBadge');
@@ -376,10 +387,21 @@ function addRect() {
 
 function deleteSelected() {
   const list = pageRects();
-  const i = list.indexOf(state.selected);
-  if (i >= 0) list.splice(i, 1);
+  const r = state.selected;
+  const i = list.indexOf(r);
+  if (i < 0) return;
+  list.splice(i, 1);
   state.selected = list[Math.min(i, list.length - 1)] || null;
   render();
+  const page = state.page;
+  toast('החיתוך נמחק', 5000, {
+    label: 'בטל',
+    run: () => {
+      const l = pageRects(page);
+      l.splice(Math.min(i, l.length), 0, r);
+      if (page === state.page) { state.selected = r; render(); }
+    },
+  });
 }
 
 function constrain(r) {
@@ -444,6 +466,10 @@ function startPinch() {
 
 stage.addEventListener('pointerdown', (e) => {
   if (!state.source || e.target.closest('#detectBar')) return;
+  if (e.target.closest('[data-del]') && pointers.size === 0) {
+    deleteSelected();
+    return;
+  }
   stage.setPointerCapture(e.pointerId);
   const p = local(e);
   pointers.set(e.pointerId, p);
