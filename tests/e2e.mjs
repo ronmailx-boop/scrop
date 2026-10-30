@@ -446,6 +446,31 @@ await test('Header shows the app version from version.js', async () => {
   assert.equal(await page.textContent('#appVersion'), `v${v}`);
 });
 
+await test('Updates reach an installed app without clearing the browser cache', async () => {
+  // A copy of the app served with GitHub Pages' cache headers (10 minutes).
+  const dir = path.join(OUT, 'site');
+  fs.cpSync(path.join(here, '..', 'public'), dir, { recursive: true });
+  const setVersion = (v) => fs.writeFileSync(path.join(dir, 'version.js'), `self.SCROP_VERSION = '${v}';\n`);
+  setVersion('100');
+  const site = await serve(dir, PORT + 1, { cacheSeconds: 600 });
+  const ctx = await browser.newContext({ ...devices['Pixel 7'] });
+  try {
+    const p = await ctx.newPage();
+    await p.goto(`http://localhost:${PORT + 1}/`);
+    await p.evaluate(() => navigator.serviceWorker.ready);
+    await p.reload();
+    assert.equal(await p.textContent('#appVersion'), 'v100');
+    // Publish a new version, then the user just reopens the app.
+    setVersion('101');
+    await p.reload();
+    await p.waitForFunction(() => document.getElementById('appVersion').textContent === 'v101', null, { timeout: 15000 });
+    assert.deepEqual(await p.evaluate(() => caches.keys()), ['scrop-v101']);
+  } finally {
+    await ctx.close();
+    site.close();
+  }
+});
+
 await test('No page errors', async () => {
   assert.deepEqual(errors, []);
 });

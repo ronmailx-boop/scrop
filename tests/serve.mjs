@@ -9,7 +9,8 @@ const TYPES = {
   '.webmanifest': 'application/manifest+json',
 };
 
-export function serve(root, port) {
+// cacheSeconds: send Cache-Control like GitHub Pages does (max-age=600).
+export function serve(root, port, { cacheSeconds = 0 } = {}) {
   const server = http.createServer((req, res) => {
     let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (p.endsWith('/')) p += 'index.html';
@@ -18,7 +19,10 @@ export function serve(root, port) {
       res.writeHead(404).end();
       return;
     }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
+      ...(cacheSeconds ? { 'cache-control': `max-age=${cacheSeconds}` } : {}),
+    });
     fs.createReadStream(file).pipe(res);
   });
   return new Promise((resolve) => server.listen(port, () => resolve(server)));
