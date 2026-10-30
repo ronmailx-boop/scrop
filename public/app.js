@@ -2,6 +2,7 @@ import {
   openImage, openPdf, closePdf, pdfPageSource, exportCrops, zipFiles, outputKind, UserError,
   NO_EDIT, isPlain, rotatedSize, drawCrop, adjustPixels,
 } from './engine.js';
+import { detectPhotos } from './detect.js';
 
 const $ = (id) => document.getElementById(id);
 const COLORS = ['#7367f0', '#e8467c', '#20a86b', '#f39c12', '#1e88e5', '#9c27b0', '#00acc1', '#e53935'];
@@ -92,6 +93,7 @@ async function loadFile(file) {
       await showPage(1);
     } else {
       setSource(await openImage(file));
+      await detectIfEmpty();
     }
     showEditor();
   } catch (e) {
@@ -103,6 +105,7 @@ async function loadFile(file) {
 }
 
 async function resetDoc() {
+  showDetectBar(null);
   state.source?.release();
   state.source = null;
   if (state.pdf) await closePdf(state.pdf);
@@ -120,9 +123,52 @@ async function showPage(n) {
     state.page = n;
     state.selected = null;
     setSource(await pdfPageSource(state.pdf, n));
+    await detectIfEmpty();
   } finally {
     busy(null);
   }
+}
+
+// ---------- automatic photo detection ----------
+
+async function detectIfEmpty() {
+  if (pageRects().length) { showDetectBar(null); return; }
+  await runDetect();
+}
+
+async function runDetect() {
+  const src = state.source;
+  if (!src) return;
+  busy('מזהה תמונות…');
+  await new Promise((r) => setTimeout(r, 30)); // let the busy overlay paint
+  let found = [];
+  try {
+    found = detectPhotos(src.preview, src.width, src.height);
+  } catch (e) {
+    console.warn('detection failed', e);
+  }
+  busy(null);
+  if (state.source !== src) return;
+  const list = pageRects();
+  list.length = 0;
+  for (const f of found) {
+    const r = { id: nextId++, x: f.x, y: f.y, w: f.w, h: f.h, edit: { ...NO_EDIT, angle: f.angle } };
+    constrain(r);
+    list.push(r);
+  }
+  state.selected = null;
+  showDetectBar(found.length);
+  render();
+}
+
+function showDetectBar(n) {
+  const bar = $('detectBar');
+  bar.hidden = n === null;
+  if (n === null) return;
+  $('detectText').textContent = n === 0
+    ? 'לא זוהו תמונות בסריקה. אפשר להוסיף חיתוך ידנית.'
+    : `${n === 1 ? 'זוהתה תמונה אחת' : `זוהו ${n} תמונות`}. אפשר לתקן או ליישר מסגרת, או לשמור הכל עכשיו.`;
+  $('detectSave').hidden = n === 0;
 }
 
 function setSource(src) {
@@ -397,7 +443,7 @@ function startPinch() {
 }
 
 stage.addEventListener('pointerdown', (e) => {
-  if (!state.source) return;
+  if (!state.source || e.target.closest('#detectBar')) return;
   stage.setPointerCapture(e.pointerId);
   const p = local(e);
   pointers.set(e.pointerId, p);
@@ -568,6 +614,7 @@ async function saveAll() {
     busy(null);
   }
   state.files = files;
+  showDetectBar(null);
   showResults();
 }
 
@@ -678,6 +725,12 @@ panel.addEventListener('touchend', (e) => {
 
 $('fileInput').addEventListener('change', (e) => loadFile(e.target.files[0]));
 $('btnAdd').addEventListener('click', addRect);
+$('btnDetect').addEventListener('click', () => {
+  if (pageRects().length && !confirm('להחליף את החיתוכים בעמוד הזה בזיהוי אוטומטי?')) return;
+  runDetect();
+});
+$('detectSave').addEventListener('click', () => saveAll());
+$('detectClose').addEventListener('click', () => showDetectBar(null));
 $('btnDelete').addEventListener('click', deleteSelected);
 $('rotL').addEventListener('click', () => editSelected((e) => { e.rot = (e.rot + 270) % 360; }));
 $('rotR').addEventListener('click', () => editSelected((e) => { e.rot = (e.rot + 90) % 360; }));

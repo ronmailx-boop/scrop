@@ -44,8 +44,14 @@
           <select id="pageSelect"></select>
         </label>
         <span id="srcInfo" class="src-info"></span>
+        <button id="btnDetect" class="ghost detect-btn">זיהוי אוטומטי</button>
       </div>
 
+      <div id="detectBar" class="detect-bar" dir="rtl" role="status" hidden>
+        <span id="detectText"></span>
+        <button id="detectSave" class="primary">שמור הכל</button>
+        <button id="detectClose" class="ghost" aria-label="סגור">✕</button>
+      </div>
       <div id="stage" class="stage" dir="ltr">
         <canvas id="preview"></canvas>
         <div id="overlay"></div>
