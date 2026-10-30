@@ -11,7 +11,7 @@ import { PNG } from 'pngjs';
 import jpeg from 'jpeg-js';
 import { unzipSync } from 'fflate';
 import { PDFDocument, PDFName, PDFDict } from 'pdf-lib';
-import { makeSamples, makePdfs, makeTilted, PHOTOS, TILTED, W, pixel, tiltedPixel } from './make-samples.mjs';
+import { makeSamples, makePdfs, makeTilted, makeEdgeScan, PHOTOS, TILTED, EDGE, W, pixel, tiltedPixel } from './make-samples.mjs';
 import { serve } from './serve.mjs';
 import { rotatedSize, rotationMatrix, adjustPixels, NO_EDIT } from '../public/engine.js';
 
@@ -159,6 +159,7 @@ fs.rmSync(OUT, { recursive: true, force: true });
 const bufs = makeSamples(OUT);
 await makePdfs(OUT, bufs);
 makeTilted(OUT);
+makeEdgeScan(OUT);
 const srcJpeg = decodeJpeg(bufs.jpgBuf);
 const server = await serve(path.join(here, '..', 'public'), PORT);
 const browser = await chromium.launch();
@@ -331,6 +332,17 @@ await test('Auto-detect: finds the 4 straight photos of the scan', async () => {
     assert.ok(f, `photo at ${p.x},${p.y} not found in ${JSON.stringify(found)}`);
     assert.equal(f.angle, 0);
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(Math.abs(f[k] - p[k]) <= 6, `${k}: ${f[k]} vs ${p[k]}`);
+  }
+});
+
+await test('Auto-detect: photos against the scan edges, very light photo, lid line', async () => {
+  await open(page, path.join(OUT, 'scan-edge.png'));
+  assert.match(await page.textContent('#detectText'), /זוהו 3 תמונות/);
+  const found = await readCrops(page);
+  for (const p of EDGE) {
+    const f = found.find((r) => Math.abs(r.x - p.x) < 20 && Math.abs(r.y - p.y) < 20);
+    assert.ok(f, `photo at ${p.x},${p.y} not found in ${JSON.stringify(found)}`);
+    for (const k of ['x', 'y', 'w', 'h']) assert.ok(Math.abs(f[k] - p[k]) <= 8, `${k}: ${f[k]} vs ${p[k]}`);
   }
 });
 

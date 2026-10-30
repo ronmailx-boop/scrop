@@ -144,19 +144,39 @@ function frameOf(px, w) {
 
 // ---------- detection ----------
 
+// The scanner bed is the most common uniform colour in the scan: photos are textured,
+// so their colours spread out, while the bed piles up in one bin. Sampling the whole
+// scan (not just its edge) matters because photos often sit against the scan's edges.
 function backgroundOf(data, w, h) {
-  // Median colour of a ring just inside the page edge (skips the scanner's edge shadow).
-  const ring = [];
-  const m = Math.max(2, Math.round(Math.min(w, h) * 0.015));
-  const step = Math.max(1, Math.round((w + h) / 600));
-  const take = (x, y) => { const o = (y * w + x) * 4; ring.push([data[o], data[o + 1], data[o + 2]]); };
-  for (let x = m; x < w - m; x += step) { take(x, m); take(x, h - 1 - m); }
-  for (let y = m; y < h - m; y += step) { take(m, y); take(w - 1 - m, y); }
-  const med = (c) => ring.map((p) => p[c]).sort((a, b) => a - b)[ring.length >> 1];
-  const bg = [med(0), med(1), med(2)];
-  const dist = ring.map((p) => Math.max(Math.abs(p[0] - bg[0]), Math.abs(p[1] - bg[1]), Math.abs(p[2] - bg[2]))).sort((a, b) => a - b);
-  const noise = dist[Math.floor(dist.length * 0.95)] || 0;
-  return { bg, threshold: Math.min(70, Math.max(22, noise + 14)) };
+  const step = Math.max(1, Math.floor(Math.sqrt((w * h) / 200000)));
+  const bins = new Uint32Array(4096);
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const o = (y * w + x) * 4;
+      bins[((data[o] >> 4) << 8) | ((data[o + 1] >> 4) << 4) | (data[o + 2] >> 4)]++;
+    }
+  }
+  let peak = 0;
+  for (let i = 1; i < bins.length; i++) if (bins[i] > bins[peak]) peak = i;
+  // Refine: mean colour of samples within ±1 bin of the peak.
+  const pr = peak >> 8, pg = (peak >> 4) & 15, pb = peak & 15;
+  let sr = 0, sg = 0, sb = 0, n = 0;
+  const near = [];
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const o = (y * w + x) * 4;
+      if (Math.abs((data[o] >> 4) - pr) <= 1 && Math.abs((data[o + 1] >> 4) - pg) <= 1 && Math.abs((data[o + 2] >> 4) - pb) <= 1) {
+        sr += data[o]; sg += data[o + 1]; sb += data[o + 2]; n++;
+        near.push(o);
+      }
+    }
+  }
+  const bg = [sr / n, sg / n, sb / n];
+  // Bed noise: spread of the bed samples around its colour.
+  const dist = near.map((o) => Math.max(Math.abs(data[o] - bg[0]), Math.abs(data[o + 1] - bg[1]), Math.abs(data[o + 2] - bg[2])))
+    .sort((a, b) => a - b);
+  const noise = dist[Math.floor(dist.length * 0.98)] || 0;
+  return { bg, threshold: Math.min(36, Math.max(10, noise * 1.5 + 6)) };
 }
 
 // image: {data, width, height} (RGBA). Returns frames in image pixels.
@@ -167,11 +187,12 @@ export function detectInImage({ data, width: w, height: h }) {
     const d = Math.max(Math.abs(data[o] - bg[0]), Math.abs(data[o + 1] - bg[1]), Math.abs(data[o + 2] - bg[2]));
     mask[i] = d > threshold ? 1 : 0;
   }
-  // Small radius: the convex hull already ignores nicks in a photo's edge, and a wide
-  // closing would fuse photos lying close together.
-  const r = 1;
-  mask = erode(dilate(mask, w, h, r), w, h, r);   // close small gaps
-  mask = dilate(erode(mask, w, h, r), w, h, r);   // drop specks
+  // Small closing: the convex hull already ignores nicks in a photo's edge, and a wide
+  // closing would fuse photos lying close together. The opening is a bit wider, to drop
+  // dust and the thin dark lines a scanner lid leaves along the scan's edge.
+  mask = erode(dilate(mask, w, h, 1), w, h, 1);
+  const open = Math.max(2, Math.round(Math.max(w, h) * 0.002));
+  mask = dilate(erode(mask, w, h, open), w, h, open);
   mask = fillHoles(mask, w, h);
 
   const minPixels = w * h * MIN_AREA;
@@ -242,7 +263,7 @@ export function detectPhotos(preview, srcW, srcH) {
   const sx = srcW / w;
   const sy = srcH / h;
   // Pull each edge in by ~1 analysis pixel so no scanner-bed sliver is left around the photo.
-  const inset = 0.75;
+  const inset = 1;
   return frames.map((f) => {
     const fw = Math.max(2, Math.round((f.w - 2 * inset) * sx));
     const fh = Math.max(2, Math.round((f.h - 2 * inset) * sy));
