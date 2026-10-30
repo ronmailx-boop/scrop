@@ -101,7 +101,7 @@ async function run(page, file, rectsByPage, format) {
       if (r.edit) {
         if (!(await page.$eval('#adjust', (d) => d.open))) await page.click('#adjust summary');
         for (let k = 0; k < (r.edit.rot || 0) / 90; k++) await page.click('#rotR');
-        for (const key of ['bright', 'contrast', 'vivid']) {
+        for (const key of ['angle', 'bright', 'contrast', 'vivid']) {
           if (r.edit[key]) await page.fill(`#adjust input[data-adj="${key}"]`, String(r.edit[key]));
         }
       }
@@ -259,6 +259,34 @@ await test('Rotate + brightness/contrast/vivid: exact pixels after the edit (PNG
       }
     }
   });
+});
+
+await test('Free straightening: output = frame content turned upright, frame size kept', async () => {
+  // A frame inside photo 2, tilted 7.5° clockwise around its center.
+  const r = { x: 1500, y: 600, w: 600, h: 400, edit: { angle: 7.5 } };
+  const { files } = await run(page, path.join(OUT, 'scan.png'), [[1, [r]]], 'source');
+  const img = PNG.sync.read(Buffer.from(files['scrop_1.png']));
+  assert.equal(`${img.width}x${img.height}`, '600x400');
+  // Output pixel (u, v) must show source point center + R(angle)·(u - w/2, v - h/2).
+  const err = (deg) => {
+    const t = (deg * Math.PI) / 180;
+    let sum = 0, n = 0;
+    for (let v = 20; v < r.h - 20; v += 17) {
+      for (let u = 20; u < r.w - 20; u += 17) {
+        const du = u + 0.5 - r.w / 2, dv = v + 0.5 - r.h / 2;
+        const sx = Math.floor(r.x + r.w / 2 + du * Math.cos(t) - dv * Math.sin(t));
+        const sy = Math.floor(r.y + r.h / 2 + du * Math.sin(t) + dv * Math.cos(t));
+        const want = pixel(sx, sy);
+        const o = (v * img.width + u) * 4;
+        for (let c = 0; c < 3; c++) { sum += Math.abs(img.data[o + c] - want[c]); n++; }
+      }
+    }
+    return sum / n;
+  };
+  const good = err(7.5);
+  console.log(`    mean error at +7.5°: ${good.toFixed(2)}, at -7.5°: ${err(-7.5).toFixed(2)}, at 0°: ${err(0).toFixed(2)}`);
+  assert.ok(good < 8, `straightened content off: ${good}`);
+  assert.ok(err(-7.5) > good * 4 && err(0) > good * 4, 'rotation direction/amount');
 });
 
 await test('No page errors', async () => {

@@ -1,11 +1,12 @@
 import {
   openImage, openPdf, closePdf, pdfPageSource, exportCrops, zipFiles, outputKind, UserError,
-  NO_EDIT, isPlain, rotatedSize, rotationMatrix, adjustPixels,
+  NO_EDIT, isPlain, rotatedSize, drawCrop, adjustPixels,
 } from './engine.js';
 
 const $ = (id) => document.getElementById(id);
 const COLORS = ['#7367f0', '#e8467c', '#20a86b', '#f39c12', '#1e88e5', '#9c27b0', '#00acc1', '#e53935'];
-const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w', 'rot'];
+const MAX_ANGLE = 45;
 const MIN_SIDE = 2;
 
 const state = {
@@ -209,6 +210,7 @@ function render() {
     el.style.top = r.y * s + ty + 'px';
     el.style.width = r.w * s + 'px';
     el.style.height = r.h * s + 'px';
+    el.style.transform = r.edit.angle ? `rotate(${r.edit.angle}deg)` : '';
     el.style.setProperty('--c', colorOf(n));
     el.classList.toggle('sel', r === state.selected);
     el.firstChild.textContent = n;
@@ -253,7 +255,7 @@ function renderPanel() {
     }
     for (const inp of $('adjust').querySelectorAll('input[type=range]')) {
       inp.value = r.edit[inp.dataset.adj];
-      inp.nextElementSibling.textContent = signed(r.edit[inp.dataset.adj]);
+      inp.nextElementSibling.textContent = signed(r.edit[inp.dataset.adj]) + (inp.dataset.adj === 'angle' ? '°' : '');
     }
     if ($('adjust').open) drawThumb();
   }
@@ -276,13 +278,13 @@ function drawThumb() {
   c.width = Math.max(1, Math.round(o.w * k));
   c.height = Math.max(1, Math.round(o.h * k));
   const ctx = c.getContext('2d', { willReadFrequently: true });
-  const pk = src.preview.width / src.width;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
   ctx.setTransform(k, 0, 0, k, 0, 0);
-  ctx.transform(...rotationMatrix(r.w, r.h, r.edit.rot));
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(src.preview, r.x * pk, r.y * pk, r.w * pk, r.h * pk, 0, 0, r.w, r.h);
+  drawCrop(ctx, src.preview, r, r.edit, src.width, src.height);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (!isPlain({ ...r.edit, rot: 0 })) {
+  if (r.edit.bright || r.edit.contrast || r.edit.vivid) {
     const id = ctx.getImageData(0, 0, c.width, c.height);
     adjustPixels(id.data, r.edit);
     ctx.putImageData(id, 0, 0);
@@ -338,8 +340,14 @@ function constrain(r) {
   const { width: W, height: H } = state.source;
   r.w = clamp(Math.round(r.w), MIN_SIDE, W);
   r.h = clamp(Math.round(r.h), MIN_SIDE, H);
-  r.x = clamp(Math.round(r.x), 0, W - r.w);
-  r.y = clamp(Math.round(r.y), 0, H - r.h);
+  if (r.edit.angle) {
+    // A tilted frame may poke past the scan edge; only keep its center on the scan.
+    r.x = clamp(Math.round(r.x), -Math.floor(r.w / 2), W - Math.ceil(r.w / 2));
+    r.y = clamp(Math.round(r.y), -Math.floor(r.h / 2), H - Math.ceil(r.h / 2));
+  } else {
+    r.x = clamp(Math.round(r.x), 0, W - r.w);
+    r.y = clamp(Math.round(r.y), 0, H - r.h);
+  }
 }
 
 function onFieldInput(e) {
@@ -399,7 +407,9 @@ stage.addEventListener('pointerdown', (e) => {
   const handle = e.target.closest('[data-h]');
   const box = e.target.closest('.crop');
   const r = box && pageRects().find((x) => x.id === Number(box.dataset.id));
-  if (r && handle && r === state.selected) {
+  if (r && handle && r === state.selected && handle.dataset.h === 'rot') {
+    gesture = { type: 'angle', r };
+  } else if (r && handle && r === state.selected) {
     gesture = { type: 'resize', r, h: handle.dataset.h, start: p, r0: { ...r } };
   } else if (r) {
     state.selected = r;
@@ -432,14 +442,25 @@ stage.addEventListener('pointermove', (e) => {
     if (Math.hypot(dx, dy) > 6) { gesture.moved = true; v.fitted = false; }
     v.tx = gesture.t0.tx + dx;
     v.ty = gesture.t0.ty + dy;
+  } else if (gesture.type === 'angle') {
+    const r = gesture.r;
+    const cx = (r.x + r.w / 2) * v.s + v.tx;
+    const cy = (r.y + r.h / 2) * v.s + v.ty;
+    let a = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI + 90;
+    if (a > 180) a -= 360;
+    a = Math.round(clamp(a, -MAX_ANGLE, MAX_ANGLE) * 10) / 10;
+    r.edit.angle = Math.abs(a) < 0.3 ? 0 : a; // snap back to straight
+    constrain(r);
   } else {
     const dx = (p.x - gesture.start.x) / v.s;
     const dy = (p.y - gesture.start.y) / v.s;
     const { r, r0 } = gesture;
+    const t = (r.edit.angle || 0) * Math.PI / 180;
     if (gesture.type === 'move') {
-      r.x = clamp(Math.round(r0.x + dx), 0, W - r.w);
-      r.y = clamp(Math.round(r0.y + dy), 0, H - r.h);
-    } else {
+      r.x = r0.x + dx;
+      r.y = r0.y + dy;
+      constrain(r);
+    } else if (!t) {
       const h = gesture.h;
       let x0 = r0.x, y0 = r0.y, x1 = r0.x + r0.w, y1 = r0.y + r0.h;
       if (h.includes('w')) x0 = clamp(Math.round(r0.x + dx), 0, x1 - MIN_SIDE);
@@ -447,6 +468,25 @@ stage.addEventListener('pointermove', (e) => {
       if (h.includes('n')) y0 = clamp(Math.round(r0.y + dy), 0, y1 - MIN_SIDE);
       if (h.includes('s')) y1 = clamp(Math.round(y1 + dy), y0 + MIN_SIDE, H);
       Object.assign(r, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    } else {
+      // Resize in the tilted frame's own axes, keeping the opposite edge in place.
+      const cos = Math.cos(t), sin = Math.sin(t);
+      const lx = dx * cos + dy * sin;
+      const ly = -dx * sin + dy * cos;
+      let L = -r0.w / 2, R = r0.w / 2, T = -r0.h / 2, B = r0.h / 2;
+      const h = gesture.h;
+      if (h.includes('w')) L = Math.min(L + lx, R - MIN_SIDE);
+      if (h.includes('e')) R = Math.max(R + lx, L + MIN_SIDE);
+      if (h.includes('n')) T = Math.min(T + ly, B - MIN_SIDE);
+      if (h.includes('s')) B = Math.max(B + ly, T + MIN_SIDE);
+      const mx = (L + R) / 2, my = (T + B) / 2;
+      const cx = r0.x + r0.w / 2 + mx * cos - my * sin;
+      const cy = r0.y + r0.h / 2 + mx * sin + my * cos;
+      r.w = Math.round(R - L);
+      r.h = Math.round(B - T);
+      r.x = cx - r.w / 2;
+      r.y = cy - r.h / 2;
+      constrain(r);
     }
   }
   render();
@@ -614,12 +654,18 @@ $('rotR').addEventListener('click', () => editSelected((e) => { e.rot = (e.rot +
 $('adjust').addEventListener('toggle', () => $('adjust').open && drawThumb());
 for (const inp of $('adjust').querySelectorAll('input[type=range]')) {
   inp.addEventListener('input', () => editSelected((e) => { e[inp.dataset.adj] = Number(inp.value); }));
+  if (inp.dataset.adj === 'angle') inp.addEventListener('input', () => { constrain(state.selected); render(); });
 }
-$('btnResetAdj').addEventListener('click', () => editSelected((e) => Object.assign(e, NO_EDIT)));
+$('btnResetAdj').addEventListener('click', () => {
+  editSelected((e) => Object.assign(e, NO_EDIT));
+  constrain(state.selected);
+  render();
+});
 $('btnAllAdj').addEventListener('click', () => {
   const src = state.selected?.edit;
   if (!src) return;
-  for (const list of state.rects.values()) for (const r of list) r.edit = { ...src };
+  // Each photo keeps its own straightening angle.
+  for (const list of state.rects.values()) for (const r of list) r.edit = { ...src, angle: r.edit.angle };
   render();
   toast('ההגדרות הוחלו על כל החיתוכים.');
 });

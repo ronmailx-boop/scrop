@@ -164,6 +164,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 .crop {
   position: absolute;
+  transform-origin: 50% 50%;
   border: 2px solid var(--c);
   background: color-mix(in srgb, var(--c) 12%, transparent);
   pointer-events: auto;
@@ -210,6 +211,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .h-s { left: 50%; top: 100%; cursor: ns-resize; }
 .h-sw { left: 0; top: 100%; cursor: nesw-resize; }
 .h-w { left: 0; top: 50%; cursor: ew-resize; }
+.h-rot { left: 50%; top: -44px; cursor: grab; }
+.crop .h-rot::after { content: "↻"; width: 30px; height: 30px; margin: -15px 0 0 -15px; display: grid; place-items: center; color: var(--c); font: 700 18px/1 system-ui, sans-serif; }
+.crop .h-rot::before { content: ""; position: absolute; left: 21px; top: 37px; width: 2px; height: 29px; background: var(--c); }
 
 /* ---------- panel ---------- */
 
@@ -309,7 +313,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .thumb-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .icon { width: 48px; padding: 0; font-size: 1.4rem; background: var(--surface); }
 #thumb { max-width: 160px; max-height: 120px; border-radius: 6px; box-shadow: 0 1px 6px rgba(0, 0, 0, .25); }
-.slider { display: grid; grid-template-columns: 70px 1fr 40px; align-items: center; gap: 8px; font-size: .85rem; }
+.slider { display: grid; grid-template-columns: 70px 1fr 48px; align-items: center; gap: 8px; font-size: .85rem; }
 .slider input { width: 100%; height: 32px; accent-color: var(--primary); }
 .slider output { text-align: center; direction: ltr; font-variant-numeric: tabular-nums; }
 .adjust-actions { display: flex; justify-content: space-between; }

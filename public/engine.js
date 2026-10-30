@@ -384,9 +384,11 @@ export function outputKind(source, format) {
 
 // ---------- per-crop edits (rotation in 90° steps, brightness / contrast / vivid) ----------
 
-export const NO_EDIT = Object.freeze({ rot: 0, bright: 0, contrast: 0, vivid: 0 });
+// angle: free straightening in degrees (clockwise); the crop frame is rotated by it
+// around its center and the output is the frame's content turned upright.
+export const NO_EDIT = Object.freeze({ rot: 0, angle: 0, bright: 0, contrast: 0, vivid: 0 });
 
-export const isPlain = (e) => !e || (!(e.rot % 360) && !e.bright && !e.contrast && !e.vivid);
+export const isPlain = (e) => !e || (!(e.rot % 360) && !e.angle && !e.bright && !e.contrast && !e.vivid);
 const hasTone = (e) => !!(e && (e.bright || e.contrast || e.vivid));
 
 // Output size of a w×h crop after rotation.
@@ -435,17 +437,49 @@ export function adjustPixels(data, e) {
   return data;
 }
 
+// Source-pixel bounding box of a crop frame rotated by `angle`, clipped to the image.
+function rotatedBounds(r, angle, W, H) {
+  const t = (angle * Math.PI) / 180;
+  const ex = (Math.abs(r.w * Math.cos(t)) + Math.abs(r.h * Math.sin(t))) / 2;
+  const ey = (Math.abs(r.w * Math.sin(t)) + Math.abs(r.h * Math.cos(t))) / 2;
+  const cx = r.x + r.w / 2;
+  const cy = r.y + r.h / 2;
+  const x0 = Math.max(0, Math.floor(cx - ex) - 1);
+  const y0 = Math.max(0, Math.floor(cy - ey) - 1);
+  const x1 = Math.min(W, Math.ceil(cx + ex) + 1);
+  const y1 = Math.min(H, Math.ceil(cy + ey) + 1);
+  return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
+}
+
+// Draws crop `r` of `img` into ctx at output orientation (current transform = output space).
+export function drawCrop(ctx, img, r, edit, W = img.width, H = img.height) {
+  ctx.transform(...rotationMatrix(r.w, r.h, edit.rot));
+  if (!edit.angle) {
+    ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    return;
+  }
+  // Straightening resamples, so interpolate (nearest-neighbour would leave jagged edges).
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.translate(r.w / 2, r.h / 2);
+  ctx.rotate((-edit.angle * Math.PI) / 180);
+  ctx.translate(-(r.x + r.w / 2), -(r.y + r.h / 2));
+  const k = img.width / W; // img may be a scaled copy (preview)
+  const b = rotatedBounds(r, edit.angle, W, H);
+  if (b) ctx.drawImage(img, b.x * k, b.y * k, b.w * k, b.h * k, b.x, b.y, b.w, b.h);
+}
+
 async function encodeRegion(img, r, type, dpi, edit = NO_EDIT) {
   const out = rotatedSize(r.w, r.h, edit.rot);
   const c = newCanvas(out.w, out.h);
   const ctx = c.getContext('2d', { alpha: type === 'png', willReadFrequently: hasTone(edit) });
   ctx.imageSmoothingEnabled = false;
-  if (type === 'jpeg') {
+  if (type === 'jpeg' || edit.angle) {
+    // Straightened frames may reach past the scan's edge: that area is white, like the scanner bed.
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, out.w, out.h);
   }
-  ctx.setTransform(...rotationMatrix(r.w, r.h, edit.rot));
-  ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+  drawCrop(ctx, img, r, edit);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (hasTone(edit)) {
     // In strips, to keep memory flat on large crops.
