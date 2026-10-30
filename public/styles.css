@@ -81,6 +81,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, .pick:focus-wit
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand h1 { margin: 0; font-size: 1.25rem; line-height: 1.1; }
+.brand .ver { font-size: .7rem; font-weight: 600; color: var(--muted); vertical-align: middle; }
 .brand p { margin: 0; font-size: .85rem; color: var(--muted); }
 body.editing .brand p { display: none; }
 .top .ghost { min-height: 40px; }
