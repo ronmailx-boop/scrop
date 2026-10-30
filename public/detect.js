@@ -205,10 +205,13 @@ export function detectInImage({ data, width: w, height: h }) {
     if (parts) frames.push(...parts);
     else frames.push(frameOf(px, w));
   }
-  return frames
+  const out = frames
     .filter((f) => f.w >= minSide && f.h >= minSide && f.w < w * 0.98 && f.h < h * 0.98)
     // Reading order: rows top to bottom, then right to left (Hebrew).
     .sort((a, b) => (Math.abs(a.cy - b.cy) < Math.min(a.h, b.h) / 2 ? b.cx - a.cx : a.cy - b.cy));
+  out.bg = bg;
+  out.threshold = threshold;
+  return out;
 }
 
 function splitBlob(px, w, minPixels) {
@@ -246,6 +249,72 @@ function splitBlob(px, w, minPixels) {
   return null;
 }
 
+// Moves each edge of a frame inward until it sits on the photo, so the saved photo has no
+// sliver of scanner bed along its border (the coarse frame, found on a reduced copy,
+// can overshoot by a pixel or two - more on a soft real-world scan or a tilted photo).
+// f is in preview pixels; read(x, y) gives that pixel's RGB, or null outside the scan.
+function refineFrame(f, read, bg, threshold, maxCut) {
+  const t = (f.deg * Math.PI) / 180;
+  const cos = Math.cos(t), sin = Math.sin(t);
+  const isBed = (u, v) => {
+    const p = read(Math.floor(f.cx + u * cos - v * sin), Math.floor(f.cy + u * sin + v * cos));
+    if (!p) return true;
+    return Math.max(Math.abs(p[0] - bg[0]), Math.abs(p[1] - bg[1]), Math.abs(p[2] - bg[2])) <= threshold;
+  };
+  // Share of scanner-bed pixels along one side, d pixels inside the frame.
+  const bedShare = (side, d) => {
+    const n = 160;
+    const along = side === 'top' || side === 'bottom' ? f.w : f.h;
+    let bed = 0;
+    for (let i = 0; i < n; i++) {
+      const s = (i / (n - 1) - 0.5) * along * 0.9; // skip the corners
+      const inner = d + 0.5;
+      const hit = side === 'top' ? isBed(s, -f.h / 2 + inner)
+        : side === 'bottom' ? isBed(s, f.h / 2 - inner)
+          : side === 'left' ? isBed(-f.w / 2 + inner, s)
+            : isBed(f.w / 2 - inner, s);
+      if (hit) bed++;
+    }
+    return bed / n;
+  };
+  const max = Math.min(maxCut, Math.round(Math.min(f.w, f.h) * 0.015));
+  const cut = {};
+  for (const side of ['top', 'bottom', 'left', 'right']) {
+    // Light photo content (sky, sand) can look like the bed too: compare against the
+    // photo just inside, so only a real sliver of bed is cut away.
+    const inside = bedShare(side, max + 4);
+    let d = 0;
+    while (d < max && bedShare(side, d) > inside * 1.5 + 0.03) d++;
+    cut[side] = Math.min(max + 1, d + 2); // two more pixels for the soft, anti-aliased edge
+  }
+  const du = (cut.left - cut.right) / 2;
+  const dv = (cut.top - cut.bottom) / 2;
+  return {
+    cx: f.cx + du * cos - dv * sin,
+    cy: f.cy + du * sin + dv * cos,
+    w: f.w - cut.left - cut.right,
+    h: f.h - cut.top - cut.bottom,
+    deg: f.deg,
+  };
+}
+
+// Pixel reader over the part of a canvas that a frame covers.
+function regionReader(canvas, f) {
+  const r = Math.hypot(f.w, f.h) / 2 + 2;
+  const x0 = Math.max(0, Math.floor(f.cx - r));
+  const y0 = Math.max(0, Math.floor(f.cy - r));
+  const x1 = Math.min(canvas.width, Math.ceil(f.cx + r));
+  const y1 = Math.min(canvas.height, Math.ceil(f.cy + r));
+  if (x1 <= x0 || y1 <= y0) return () => null;
+  const { data } = canvas.getContext('2d').getImageData(x0, y0, x1 - x0, y1 - y0);
+  const bw = x1 - x0;
+  return (x, y) => {
+    if (x < x0 || y < y0 || x >= x1 || y >= y1) return null;
+    const o = ((y - y0) * bw + (x - x0)) * 4;
+    return [data[o], data[o + 1], data[o + 2]];
+  };
+}
+
 // Runs on the display copy of the scan; returns crops in source pixels:
 // [{x, y, w, h, angle}] with angle in degrees (clockwise).
 export function detectPhotos(preview, srcW, srcH) {
@@ -260,13 +329,25 @@ export function detectPhotos(preview, srcW, srcH) {
   ctx.drawImage(preview, 0, 0, w, h);
   const frames = detectInImage(ctx.getImageData(0, 0, w, h));
   c.width = c.height = 0;
-  const sx = srcW / w;
-  const sy = srcH / h;
-  // Pull each edge in by ~1 analysis pixel so no scanner-bed sliver is left around the photo.
-  const inset = 1;
-  return frames.map((f) => {
-    const fw = Math.max(2, Math.round((f.w - 2 * inset) * sx));
-    const fh = Math.max(2, Math.round((f.h - 2 * inset) * sy));
+  // Frames to preview pixels, sharpened there at full display resolution, then to source pixels.
+  const pk = preview.width / w;
+  const sx = srcW / preview.width;
+  const sy = srcH / preview.height;
+  // The bed's noise is larger at full resolution than on the averaged analysis copy.
+  const threshold = frames.threshold * 1.4;
+  // The coarse frame overshoots by at most ~2 analysis pixels: never cut deeper than that,
+  // so light photo content (sky, sand) at an edge can't eat into the photo.
+  const maxCut = Math.ceil(2.5 * pk) + 2;
+  return frames.map((a) => {
+    const coarse = { cx: a.cx * pk, cy: a.cy * pk, w: a.w * pk, h: a.h * pk, deg: a.deg };
+    let f = coarse;
+    try {
+      f = refineFrame(coarse, regionReader(preview, coarse), frames.bg, threshold, maxCut);
+    } catch (e) {
+      console.warn('frame refinement failed', e);
+    }
+    const fw = Math.max(2, Math.round(f.w * sx));
+    const fh = Math.max(2, Math.round(f.h * sy));
     return {
       x: Math.round(f.cx * sx - fw / 2),
       y: Math.round(f.cy * sy - fh / 2),

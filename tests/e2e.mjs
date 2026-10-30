@@ -381,9 +381,10 @@ await test('Auto-detect crooked photos: frames straightened, save all at once', 
       if (Math.abs(img.data[o] - want[0]) + Math.abs(img.data[o + 1] - want[1]) + Math.abs(img.data[o + 2] - want[2]) < 12) bed++;
       n++;
     };
-    for (let x = 0; x < img.width; x += 3) { edge(x, 1); edge(x, img.height - 2); }
-    for (let y = 0; y < img.height; y += 3) { edge(1, y); edge(img.width - 2, y); }
-    assert.ok(bed / n < 0.02, `${name}: ${(100 * bed / n).toFixed(1)}% of the border is scanner bed`);
+    // The very outermost rows/columns: no sliver of scanner bed on any side.
+    for (let x = 0; x < img.width; x += 2) { edge(x, 0); edge(x, img.height - 1); }
+    for (let y = 0; y < img.height; y += 2) { edge(0, y); edge(img.width - 1, y); }
+    assert.ok(bed / n < 0.01, `${name}: ${(100 * bed / n).toFixed(1)}% of the border is scanner bed`);
   }
 });
 
