@@ -1,7 +1,7 @@
 # Scrop – Project State
 
 ## Current Focus
-גרסה 1 + סיבוב והתאמות תמונה נבנו ונבדקו + יישור חופשי נבנו ונבדקו (E2E עובר, sw VERSION=scrop-v3). האתר חי ב-https://ronmailx-boop.github.io/scrop/ (sw VERSION=scrop-v4). הצעד הבא: מיזוג שינוי ה-bottom sheet ל-main, ובדיקה בטלפון אנדרואיד אמיתי (סריקה גדולה ~50MP, שיתוף לאפליקציה, הורדת כמה קבצים).
+גרסה 1 + סיבוב/יישור/התאמות + חלונית הגדרות נסגרת בהחלקה — נבנו ונבדקו (E2E עובר, sw VERSION=scrop-v4). האתר חי ב-https://ronmailx-boop.github.io/scrop/. הצעד הבא: מיזוג שינוי ה-bottom sheet ל-main, ובדיקה בטלפון אנדרואיד אמיתי (סריקה גדולה ~50MP, שיתוף לאפליקציה, הורדת כמה קבצים).
 
 ## Tasks
 - [x] מבנה ריפו, ספריות מקומיות (pdf.js 4.10.38, pdf-lib 1.17.1, fflate 0.8.2)
