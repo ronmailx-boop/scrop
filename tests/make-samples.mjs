@@ -27,6 +27,47 @@ export function pixel(x, y) {
   ];
 }
 
+// Crooked photos (center, size, clockwise angle); photos 3 and 4 almost touch (≈1 mm apart at the top).
+export const TILTED = [
+  { cx: 640, cy: 700, w: 1000, h: 760, deg: -6 },
+  { cx: 1820, cy: 760, w: 900, h: 1200, deg: 9.5 },
+  { cx: 700, cy: 2250, w: 1100, h: 1400, deg: 3 },
+  { cx: 1878, cy: 2250, w: 1150, h: 1400, deg: 0 },
+];
+
+export function tiltedPixel(x, y) {
+  for (const [i, p] of TILTED.entries()) {
+    const t = (p.deg * Math.PI) / 180;
+    const dx = x + 0.5 - p.cx, dy = y + 0.5 - p.cy;
+    const u = dx * Math.cos(t) + dy * Math.sin(t);
+    const v = -dx * Math.sin(t) + dy * Math.cos(t);
+    if (Math.abs(u) <= p.w / 2 && Math.abs(v) <= p.h / 2) {
+      // Each photo has a light sky-like top half, like real prints.
+      const sky = v < 0;
+      return [
+        Math.round((sky ? 200 : 90) + 40 * Math.sin(u / 23 + i)),
+        Math.round((sky ? 215 : 120) + 30 * Math.sin(v / 17)),
+        Math.round((sky ? 235 : 60) + 15 * Math.sin((u + v) / 31)),
+      ];
+    }
+  }
+  return [250, 250, 248];
+}
+
+export function makeTilted(dir) {
+  const png = new PNG({ width: W, height: H, colorType: 2 });
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const o = (y * W + x) * 4;
+      const [r, g, b] = tiltedPixel(x, y);
+      png.data[o] = r; png.data[o + 1] = g; png.data[o + 2] = b; png.data[o + 3] = 255;
+    }
+  }
+  const buf = PNG.sync.write(png, { colorType: 2 });
+  fs.writeFileSync(path.join(dir, 'scan-tilted.png'), buf);
+  return png;
+}
+
 export function makeSamples(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const rgba = Buffer.alloc(W * H * 4);
@@ -79,5 +120,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const dir = process.argv[2] || 'tests/samples';
   const bufs = makeSamples(dir);
   await makePdfs(dir, bufs);
+  makeTilted(dir);
   console.log('samples written to', dir);
 }

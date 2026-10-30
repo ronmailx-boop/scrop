@@ -44,14 +44,22 @@
           <select id="pageSelect"></select>
         </label>
         <span id="srcInfo" class="src-info"></span>
+        <button id="btnDetect" class="ghost detect-btn">זיהוי אוטומטי</button>
       </div>
 
+      <div id="detectBar" class="detect-bar" dir="rtl" role="status" hidden>
+        <span id="detectText"></span>
+        <button id="detectSave" class="primary">שמור הכל</button>
+        <button id="detectClose" class="ghost" aria-label="סגור">✕</button>
+      </div>
       <div id="stage" class="stage" dir="ltr">
         <canvas id="preview"></canvas>
         <div id="overlay"></div>
       </div>
 
-      <div class="panel">
+      <div id="panel" class="panel">
+        <button id="grip" class="grip" aria-label="הסתר או הצג הגדרות" aria-expanded="true"><span></span></button>
+        <div id="panelBody" class="panel-body">
         <div id="chips" class="chips"></div>
 
         <div id="fields" class="fields" hidden>
@@ -97,6 +105,7 @@
           <label><input type="radio" name="fmt" value="source" checked><span>אותו פורמט כמו המקור <small id="srcFmt" dir="ltr"></small></span></label>
           <label><input type="radio" name="fmt" value="jpg"><span>JPG</span></label>
           <label><input type="radio" name="fmt" value="pdf"><span>PDF</span></label>
+        </div>
         </div>
         <div class="actions">
           <button id="btnAdd" class="secondary">+ הוסף חיתוך</button>

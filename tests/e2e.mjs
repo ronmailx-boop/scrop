@@ -11,7 +11,7 @@ import { PNG } from 'pngjs';
 import jpeg from 'jpeg-js';
 import { unzipSync } from 'fflate';
 import { PDFDocument, PDFName, PDFDict } from 'pdf-lib';
-import { makeSamples, makePdfs, PHOTOS, W, pixel } from './make-samples.mjs';
+import { makeSamples, makePdfs, makeTilted, PHOTOS, TILTED, W, pixel, tiltedPixel } from './make-samples.mjs';
 import { serve } from './serve.mjs';
 import { rotatedSize, rotationMatrix, adjustPixels, NO_EDIT } from '../public/engine.js';
 
@@ -82,17 +82,52 @@ async function pdfImage(buf) {
 
 // ---------- browser driving ----------
 
-async function run(page, file, rectsByPage, format) {
+async function open(page, file) {
   await page.goto(`http://localhost:${PORT}/`);
   await page.setInputFiles('#fileInput', file);
   await page.waitForSelector('#editor:not([hidden])');
   await page.waitForFunction(() => document.getElementById('busy').hidden);
+}
+
+// Removes the automatically detected crops so a test can set exact ones.
+async function clearCrops(page) {
+  while (await page.locator('.chip').count()) {
+    await page.locator('.chip').first().click();
+    await page.click('#btnDelete');
+  }
+}
+
+async function saveZip(page, name) {
+  await page.waitForSelector('#results[open]');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#btnZip')]);
+  const zipPath = path.join(OUT, `${name}.zip`);
+  await download.saveAs(zipPath);
+  await page.click('#btnClose');
+  return unzipSync(fs.readFileSync(zipPath));
+}
+
+// Crops the app currently holds, in source pixels, read from the numeric fields.
+async function readCrops(page) {
+  const out = [];
+  const n = await page.locator('.chip').count();
+  for (let i = 0; i < n; i++) {
+    await page.locator('.chip').nth(i).click();
+    const v = async (k) => Number(await page.inputValue(`#fields input[data-k="${k}"][data-u="px"]`));
+    out.push({ x: await v('x'), y: await v('y'), w: await v('w'), h: await v('h'),
+      angle: await page.evaluate(() => Number(document.querySelector('#adjust input[data-adj="angle"]').value)) });
+  }
+  return out;
+}
+
+async function run(page, file, rectsByPage, format) {
+  await open(page, file);
   const info = await page.textContent('#srcInfo');
   for (const [pageNo, rects] of rectsByPage) {
     if (pageNo > 1) {
       await page.selectOption('#pageSelect', String(pageNo));
       await page.waitForFunction(() => document.getElementById('busy').hidden);
     }
+    await clearCrops(page);
     for (const r of rects) {
       await page.click('#btnAdd');
       const set = async (k, v) => page.fill(`#fields input[data-k="${k}"][data-u="px"]`, String(v));
@@ -113,12 +148,7 @@ async function run(page, file, rectsByPage, format) {
   }
   await page.click(`.seg input[value="${format}"] + span`);
   await page.click('#btnSave');
-  await page.waitForSelector('#results[open]');
-  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#btnZip')]);
-  const zipPath = path.join(OUT, `${path.basename(file)}-${format}.zip`);
-  await download.saveAs(zipPath);
-  await page.click('#btnClose');
-  return { info, files: unzipSync(fs.readFileSync(zipPath)) };
+  return { info, files: await saveZip(page, `${path.basename(file)}-${format}`) };
 }
 
 // ---------- main ----------
@@ -126,6 +156,7 @@ async function run(page, file, rectsByPage, format) {
 fs.rmSync(OUT, { recursive: true, force: true });
 const bufs = makeSamples(OUT);
 await makePdfs(OUT, bufs);
+makeTilted(OUT);
 const srcJpeg = decodeJpeg(bufs.jpgBuf);
 const server = await serve(path.join(here, '..', 'public'), PORT);
 const browser = await chromium.launch();
@@ -287,6 +318,48 @@ await test('Free straightening: output = frame content turned upright, frame siz
   console.log(`    mean error at +7.5°: ${good.toFixed(2)}, at -7.5°: ${err(-7.5).toFixed(2)}, at 0°: ${err(0).toFixed(2)}`);
   assert.ok(good < 8, `straightened content off: ${good}`);
   assert.ok(err(-7.5) > good * 4 && err(0) > good * 4, 'rotation direction/amount');
+});
+
+await test('Auto-detect: finds the 4 straight photos of the scan', async () => {
+  await open(page, path.join(OUT, 'scan.png'));
+  assert.match(await page.textContent('#detectText'), /זוהו 4 תמונות/);
+  const found = await readCrops(page);
+  for (const p of PHOTOS) {
+    const f = found.find((r) => Math.abs(r.x - p.x) < 20 && Math.abs(r.y - p.y) < 20);
+    assert.ok(f, `photo at ${p.x},${p.y} not found in ${JSON.stringify(found)}`);
+    assert.equal(f.angle, 0);
+    for (const k of ['x', 'y', 'w', 'h']) assert.ok(Math.abs(f[k] - p[k]) <= 6, `${k}: ${f[k]} vs ${p[k]}`);
+  }
+});
+
+await test('Auto-detect crooked photos: frames straightened, save all at once', async () => {
+  await open(page, path.join(OUT, 'scan-tilted.png'));
+  assert.match(await page.textContent('#detectText'), /זוהו 4 תמונות/);
+  const found = await readCrops(page);
+  for (const p of TILTED) {
+    const f = found.find((r) => Math.hypot(r.x + r.w / 2 - p.cx, r.y + r.h / 2 - p.cy) < 15);
+    assert.ok(f, `photo at ${p.cx},${p.cy} not found in ${JSON.stringify(found)}`);
+    assert.ok(Math.abs(f.angle - p.deg) <= 0.3, `angle ${f.angle} vs ${p.deg}`);
+    assert.ok(Math.abs(f.w - p.w) <= 10 && Math.abs(f.h - p.h) <= 10, `size ${f.w}x${f.h} vs ${p.w}x${p.h}`);
+  }
+  // One tap: "save all" in the detection bar.
+  await page.click('#detectSave');
+  const files = await saveZip(page, 'tilted-auto');
+  assert.equal(Object.keys(files).length, 4);
+  for (const [name, buf] of Object.entries(files)) {
+    const img = PNG.sync.read(Buffer.from(buf));
+    // Straightened output: the outer rows/columns are photo, not scanner bed.
+    let bed = 0, n = 0;
+    const edge = (x, y) => {
+      const o = (y * img.width + x) * 4;
+      const want = tiltedPixel(-10, -10);
+      if (Math.abs(img.data[o] - want[0]) + Math.abs(img.data[o + 1] - want[1]) + Math.abs(img.data[o + 2] - want[2]) < 12) bed++;
+      n++;
+    };
+    for (let x = 0; x < img.width; x += 3) { edge(x, 1); edge(x, img.height - 2); }
+    for (let y = 0; y < img.height; y += 3) { edge(1, y); edge(img.width - 2, y); }
+    assert.ok(bed / n < 0.02, `${name}: ${(100 * bed / n).toFixed(1)}% of the border is scanner bed`);
+  }
 });
 
 await test('No page errors', async () => {
