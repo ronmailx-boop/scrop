@@ -1,12 +1,14 @@
 // Offline cache for the app shell + share-target handler.
-// Bump VERSION on every release so clients pick up the new files.
-const VERSION = 'scrop-v8';
+// The version lives in version.js (bump it on every release).
+importScripts('version.js');
+const VERSION = 'scrop-v' + self.SCROP_VERSION;
 const SHARE_CACHE = 'scrop-share';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './version.js',
   './engine.js',
   './detect.js',
   './manifest.webmanifest',

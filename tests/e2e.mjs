@@ -440,6 +440,12 @@ await test('Review screen: rotate a cropped photo after cropping, then save', as
   assert.equal(`${img.width}×${img.height}`, `${h}×${w}`);
 });
 
+await test('Header shows the app version from version.js', async () => {
+  await page.goto(`http://localhost:${PORT}/`);
+  const v = fs.readFileSync(path.join(here, '..', 'public', 'version.js'), 'utf8').match(/SCROP_VERSION = '([^']+)'/)[1];
+  assert.equal(await page.textContent('#appVersion'), `v${v}`);
+});
+
 await test('No page errors', async () => {
   assert.deepEqual(errors, []);
 });

@@ -23,6 +23,8 @@ const state = {
 };
 let nextId = 1;
 
+$('appVersion').textContent = `v${window.SCROP_VERSION}`;
+
 const stage = $('stage');
 const overlay = $('overlay');
 const preview = $('preview');
